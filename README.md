@@ -1,42 +1,77 @@
-# Kali Linux Nvidia HDMI External Monitor Fix
+# Kali Linux NVIDIA HDMI External Monitor Fix
 
-This repository provides a diagnostic guide and an automated script to resolve the issue where external monitors (connected via HDMI) stop working on Kali Linux after installing the proprietary NVIDIA drivers.
+This repository provides an automated fix script and a diagnostic guide to resolve the issue where external monitors connected via HDMI (or DisplayPort) are not detected on Kali Linux after installing the proprietary NVIDIA drivers. 
 
-This problem typically affects hybrid graphics (Optimus) laptops with both an integrated GPU (Intel/AMD) and a discrete NVIDIA GPU, running a GNOME Wayland session.
+This issue typically affects hybrid graphics (Optimus) laptops equipped with both an integrated GPU (Intel or AMD) and a discrete NVIDIA GPU, running a GNOME Wayland desktop environment.
 
 ---
 
 ## The Problem
 
-After switching from the open-source Nouveau driver to the proprietary NVIDIA driver, the external monitor connected via HDMI stops receiving any display signal and is no longer detected by the system. However, the internal laptop display (driven by the integrated graphics) continues to work.
+After transitioning from the open-source Nouveau driver to the proprietary NVIDIA driver, the external monitor connected via HDMI stops receiving a signal and is no longer detected by the operating system. Meanwhile, the laptop's built-in display continues to function normally.
+
+---
+
+## Diagnostics
+
+To determine if your system is affected by this specific issue, verify the following:
+
+### 1. Verify Display Session Type
+Check if your desktop environment is running under Wayland:
+```bash
+echo $XDG_SESSION_TYPE
+```
+This guide applies if the output is `wayland`.
+
+### 2. Verify NVIDIA Driver Status
+Confirm that the proprietary NVIDIA driver is loaded and active:
+```bash
+nvidia-smi
+```
+And check that the kernel modules are loaded:
+```bash
+lsmod | grep nvidia
+```
+You should see modules like `nvidia`, `nvidia_modeset`, `nvidia_uvm`, and `nvidia_drm` in the output.
+
+### 3. Check Kernel Modesetting Status
+Check if Kernel Modesetting (KMS) is enabled for the NVIDIA DRM module:
+```bash
+cat /sys/module/nvidia_drm/parameters/modeset
+```
+* **If the output is N:** Kernel Modesetting is disabled. This is the root cause of the issue.
+* **If the output is Y:** Modesetting is already enabled. The issue may lie elsewhere (e.g., physical cables, ports, or display configuration).
 
 ---
 
 ## Why It Happens (Root Cause)
 
-1. **Hardware Routing:** On many hybrid laptops, the internal screen is wired to the integrated graphics card, while the external HDMI port is physically wired directly to the discrete NVIDIA GPU.
-2. **Wayland and KMS Requirements:** Modern desktop environments running under Wayland (such as GNOME with Mutter) rely entirely on Kernel Mode Setting (KMS) to interface with graphics hardware and manage display outputs.
-3. **The Configuration Gap:** When installing the proprietary NVIDIA driver on Debian-based distributions like Kali Linux, DRM Kernel Modesetting is disabled by default (`nvidia-drm.modeset=0`).
-4. **The Result:** Because KMS is disabled, the NVIDIA driver does not register its display interfaces with the Linux kernel's DRM subsystem. The Wayland compositor cannot see the NVIDIA GPU as a display-capable device, rendering the HDMI port completely invisible.
+1. **Hardware Topography (Hybrid Graphics):** In most hybrid graphics laptops, the laptop's internal panel is driven directly by the integrated GPU (Intel or AMD). However, the external HDMI port is physically wired directly to the discrete NVIDIA GPU.
+2. **Wayland and KMS Requirements:** Modern Wayland compositors (such as GNOME's Mutter) require Kernel Mode Setting (KMS) to interface with graphics hardware. They use DRM/KMS APIs to discover display outputs and manage multi-monitor setups.
+3. **The Driver Configuration:** When installing the proprietary NVIDIA drivers on Debian-based distributions like Kali Linux, DRM Kernel Modesetting is disabled by default (`nvidia-drm.modeset=0` or `modeset=N`).
+4. **The Consequence:** Because KMS is disabled, the NVIDIA driver does not register its display interfaces with the Linux kernel's DRM subsystem. The Wayland compositor cannot see the NVIDIA GPU as a display-capable device. Consequently, the HDMI port and any connected monitor are completely ignored by the system.
 
 ---
 
 ## The Solution
 
-To fix this, Kernel Modesetting must be enabled for the Nvidia driver. This requires making configuration changes to both the modprobe module options and the GRUB bootloader parameters, followed by rebuilding the initramfs.
+To resolve this issue, Kernel Modesetting must be enabled for the NVIDIA driver so that the Wayland compositor can detect and manage the HDMI output. This requires updating the modprobe configuration and the GRUB bootloader parameters, followed by rebuilding the initramfs.
 
-The included `apply_fix.sh` script automates these steps.
+The included `apply_fix.sh` script automates this process.
 
-### What the Script Does:
+### What the Fix Script Does:
 
-1. **Creates Modprobe Configuration:** It adds `options nvidia-drm modeset=1` to `/etc/modprobe.d/nvidia-drm-modeset.conf`.
-2. **Updates GRUB Parameters:** It appends `nvidia_drm.modeset=1` to `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`.
-3. **Rebuilds Initramfs:** Rebuilds the initial ramdisk (using `update-initramfs -u`) to ensure the Nvidia driver loads with modesetting enabled during early boot.
-4. **Updates GRUB Bootloader:** Runs `update-grub` to apply the updated kernel command-line arguments.
+1. **Creates Modprobe Configuration:** It creates or updates `/etc/modprobe.d/nvidia-drm-modeset.conf` with the following option:
+   ```ini
+   options nvidia-drm modeset=1
+   ```
+2. **Appends GRUB Boot Parameters:** It updates `/etc/default/grub` to append `nvidia_drm.modeset=1` to the kernel boot command line (`GRUB_CMDLINE_LINUX_DEFAULT`).
+3. **Rebuilds the Initramfs:** It regenerates the initial ramdisk (`update-initramfs -u`) to ensure the NVIDIA kernel driver is loaded with modesetting enabled during the early stages of system boot.
+4. **Updates the Bootloader:** It updates the GRUB boot menu configurations (`update-grub`).
 
 ---
 
-## How to Use
+## How to Apply the Fix
 
 1. Clone this repository:
    ```bash
@@ -49,7 +84,7 @@ The included `apply_fix.sh` script automates these steps.
    chmod +x apply_fix.sh
    ```
 
-3. Run the script with sudo privileges:
+3. Run the script with root privileges:
    ```bash
    sudo ./apply_fix.sh
    ```
@@ -61,12 +96,13 @@ The included `apply_fix.sh` script automates these steps.
 
 ---
 
-## Verification
+## Post-Fix Verification
 
-After rebooting, you can verify that Kernel Modesetting is successfully enabled by running:
+Once your system has rebooted, check the status of Kernel Modesetting again:
 
 ```bash
 cat /sys/module/nvidia_drm/parameters/modeset
 ```
 
-If the output is `Y`, modesetting is active. Connect your HDMI cable, and the external display will now be detected and work as expected.
+* The output should now be **Y**.
+* Connect your HDMI cable. The external monitor should be detected immediately by GNOME and can be configured in Settings -> Displays.
